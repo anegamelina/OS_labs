@@ -17,7 +17,7 @@ typedef struct {
 sem_t semaphore;
 
 void *Gauss_thread(void *arg);
-void Gauss_elimination(double matrix[MAX_SIZE][MAX_SIZE], double b[MAX_SIZE], int n, int max_threads);
+void Gauss_method(double matrix[MAX_SIZE][MAX_SIZE], double b[MAX_SIZE], int n, int max_threads);
 void Print_matrix(double matrix[MAX_SIZE][MAX_SIZE], double b[MAX_SIZE], int n);
 
 int main(int argc, char *argv[]) {
@@ -48,7 +48,7 @@ int main(int argc, char *argv[]) {
 
     Print_matrix(matrix, b, n);
 
-    Gauss_elimination(matrix, b, n, max_threads);
+    Gauss_method(matrix, b, n, max_threads);
 
     printf("Answers are:\n");
     for (int i = 0; i < n; i++) {
@@ -85,7 +85,7 @@ void *Gauss_thread(void *arg) {
     return NULL;
 }
 
-void Gauss_elimination(double matrix[MAX_SIZE][MAX_SIZE], double b[MAX_SIZE], int n, int max_threads) {
+void Gauss_method(double matrix[MAX_SIZE][MAX_SIZE], double b[MAX_SIZE], int n, int max_threads) {
     pthread_t threads[MAX_THREADS];
     ThreadData thread_data[MAX_THREADS];
 
