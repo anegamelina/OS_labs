@@ -48,12 +48,19 @@ int main(int argc, char *argv[]) {
 
     Print_matrix(matrix, b, n);
 
+    clock_t start_time = clock(); // засекаем время начала выполнения
+
     Gauss_method(matrix, b, n, max_threads);
+
+    clock_t end_time = clock(); // засекаем время окончания выполнения
 
     printf("Answers are:\n");
     for (int i = 0; i < n; i++) {
         printf("x%d = %f\n", i, b[i]);
     }
+
+    double time_spent = (double)(end_time - start_time) / CLOCKS_PER_SEC;
+    printf("Time taken: %f seconds\n", time_spent);
 
     return 0;
 }
