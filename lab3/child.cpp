@@ -1,82 +1,64 @@
 #include <unistd.h>
+#include <sstream>
+#include <string>
 #include <cstring>
-#include <cstdlib>
-#include <cstdio>
-#include <sys/mman.h>
+#include <iostream>
 #include <semaphore.h>
+#include <sys/mman.h>
 #include <fcntl.h>
 
-#define SHM_NAME "/my_shm"
-#define SEM_EMPTY_NAME "/empty_sem"
-#define SEM_FULL_NAME "/full_sem"
-
 int main() {
-    int shm_fd = shm_open(SHM_NAME, O_RDWR, 0644);
+    const char *shm_name = "/shm_example";
+    const char *sem_name = "/sem_example";
+
+    int shm_fd = shm_open(shm_name, O_RDWR, S_IRUSR | S_IWUSR);
     if (shm_fd == -1) {
-        perror("Error opening shared memory");
+        perror("shm_open");
         exit(EXIT_FAILURE);
     }
 
-    size_t shm_size = 1024 * 1024;
-    char *shm_ptr = (char *)mmap(nullptr, shm_size, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    char *shm_ptr = (char *)mmap(nullptr, sizeof(char) * 256, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
     if (shm_ptr == MAP_FAILED) {
-        perror("Error mapping shared memory");
+        perror("mmap");
         exit(EXIT_FAILURE);
     }
 
-    sem_t *sem_empty = sem_open(SEM_EMPTY_NAME, 0);
-    if (sem_empty == SEM_FAILED) {
-        perror("Error opening empty semaphore");
+    sem_t *sem = sem_open(sem_name, 0);
+    if (sem == SEM_FAILED) {
+        perror("sem_open");
         exit(EXIT_FAILURE);
     }
 
-    sem_t *sem_full = sem_open(SEM_FULL_NAME, 0);
-    if (sem_full == SEM_FAILED) {
-        perror("Error opening full semaphore");
-        exit(EXIT_FAILURE);
-    }
+    char input[256];
+    ssize_t read_bytes;
 
-    while (true) {
-        sem_wait(sem_full);
+    while ((read_bytes = read(STDIN_FILENO, input, sizeof(input) - 1)) > 0) {
+        input[read_bytes] = '\0';
 
-        ssize_t read_bytes = strlen(shm_ptr);
-        if (read_bytes == 0) {
-            break;
-        }
+        char* line = strtok(input, "\n");
 
-        char *line = strtok(shm_ptr, "\n");
         while (line) {
-            char *token = strtok(line, " ");
-            float sum = 0;
-            bool valid_input = true;
+            std::istringstream stream(line);
+            float number, sum = 0;
 
-            while (token) {
-                char *endptr;
-                float number = strtof(token, &endptr);
-                if (endptr == token || *endptr != '\0') {
-                    valid_input = false;
-                    break;
-                }
+            while (stream >> number) {
                 sum += number;
-                token = strtok(nullptr, " ");
             }
 
-            if (valid_input) {
-                snprintf(shm_ptr, shm_size, "Sum of elements: %.2f\n", sum);
-            } else {
-                snprintf(shm_ptr, shm_size, "Invalid input. Please enter numbers only.\n");
-            }
+            char output[256];
+            int output_len = snprintf(output, sizeof(output), "Sum of elements: %.2f\n", sum);
 
-            sem_post(sem_empty);
+            snprintf(shm_ptr, 256, "%s", output);
+
+            sem_wait(sem);
 
             line = strtok(nullptr, "\n");
         }
     }
 
-    munmap(shm_ptr, shm_size);
+    sem_close(sem);
+    munmap(shm_ptr, sizeof(char) * 256);
     close(shm_fd);
-    sem_close(sem_empty);
-    sem_close(sem_full);
 
     return 0;
 }

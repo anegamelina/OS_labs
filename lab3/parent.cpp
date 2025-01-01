@@ -1,22 +1,20 @@
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/mman.h>
 #include <sys/wait.h>
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
-#include <sys/mman.h>
 #include <semaphore.h>
+#include <sys/stat.h>
 
-#define SHM_NAME "/my_shm"
-#define SEM_EMPTY_NAME "/empty_sem"
-#define SEM_FULL_NAME "/full_sem"
-
-void Create_semaphores(sem_t **sem_empty, sem_t **sem_full);
-void Create_shared_memory(char **shm_ptr, size_t shm_size);
+void Create_pipe(int *fd);
+void handle_error(const char *msg);
 
 int main() {
     char file[256];
     ssize_t read_bytes;
+    int pipe1[2];
 
     write(STDOUT_FILENO, "Enter the file name: ", 21);
     read_bytes = read(STDIN_FILENO, file, sizeof(file) - 1);
@@ -28,12 +26,21 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    sem_t *sem_empty, *sem_full;
-    Create_semaphores(&sem_empty, &sem_full);
+    Create_pipe(pipe1);
 
-    char *shm_ptr;
-    size_t shm_size = 1024 * 1024;
-    Create_shared_memory(&shm_ptr, shm_size);
+    const char *shm_name = "/shm_example";
+    const char *sem_name = "/sem_example";
+
+    int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+    if (shm_fd == -1) handle_error("shm_open");
+
+    if (ftruncate(shm_fd, sizeof(char) * 256) == -1) handle_error("ftruncate");
+
+    char *shm_ptr = (char *)mmap(nullptr, sizeof(char) * 256, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    if (shm_ptr == MAP_FAILED) handle_error("mmap");
+
+    sem_t *sem = sem_open(sem_name, O_CREAT, S_IRUSR | S_IWUSR, 0);
+    if (sem == SEM_FAILED) handle_error("sem_open");
 
     pid_t pid = fork();
     if (pid == -1) {
@@ -41,114 +48,60 @@ int main() {
         exit(EXIT_FAILURE);
     }
     else if (pid == 0) {
-        sem_wait(sem_full);
+        close(pipe1[0]);
 
-        char *input = shm_ptr;
-        if (strlen(input) == 0) {
-            write(STDERR_FILENO, "No data in shared memory.\n", 26);
-            exit(EXIT_FAILURE);
-        }
-
-        char *line = strtok(input, "\n");
-        while (line) {
-            char *token = strtok(line, " ");
-            float sum = 0;
-            bool valid_input = true;
-
-            while (token) {
-                char *endptr;
-                float number = strtof(token, &endptr);
-                if (endptr == token || *endptr != '\0') {
-                    valid_input = false;
-                    break;
-                }
-                sum += number;
-                token = strtok(nullptr, " ");
-            }
-
-            if (valid_input) {
-                char output[256];
-                int output_len = snprintf(output, sizeof(output), "Sum of elements: %.2f\n", sum);
-                write(STDOUT_FILENO, output, output_len);
-            } else {
-                const char* error_msg = "Invalid input. Please enter numbers only.\n";
-                write(STDOUT_FILENO, error_msg, strlen(error_msg));
-            }
-
-            line = strtok(nullptr, "\n");
-        }
-
-        munmap(shm_ptr, shm_size);
-        sem_close(sem_empty);
-        sem_close(sem_full);
-        exit(EXIT_SUCCESS);
-    }
-    else {
         int file_fd = open(file, O_RDONLY);
         if (file_fd == -1) {
             perror("Problems with opening file\n");
             exit(EXIT_FAILURE);
         }
 
-        ssize_t bytes_read = read(file_fd, shm_ptr, shm_size - 1);
+        dup2(file_fd, STDIN_FILENO);
+        dup2(pipe1[1], STDOUT_FILENO);
+
         close(file_fd);
-        if (bytes_read < 0) {
-            perror("Problems with reading file\n");
-            exit(EXIT_FAILURE);
-        }
-        shm_ptr[bytes_read] = '\0';
+        close(pipe1[1]);
 
-        sem_post(sem_full);
-
-        sem_wait(sem_empty);
+        sem_wait(sem);
 
         write(STDOUT_FILENO, shm_ptr, strlen(shm_ptr));
 
-        waitpid(pid, NULL, 0);
+        sem_close(sem);
+        munmap(shm_ptr, sizeof(char) * 256);
+        shm_unlink(shm_name);
+        exit(EXIT_SUCCESS);
+    }
+    else {
+        close(pipe1[1]);
 
-        munmap(shm_ptr, shm_size);
-        sem_close(sem_empty);
-        sem_close(sem_full);
+        char buffer[256];
+        while ((read_bytes = read(pipe1[0], buffer, sizeof(buffer) - 1)) > 0) {
+            buffer[read_bytes] = '\0';
+            write(STDOUT_FILENO, buffer, read_bytes);
+        }
 
-        sem_unlink(SEM_EMPTY_NAME);
-        sem_unlink(SEM_FULL_NAME);
-        shm_unlink(SHM_NAME);
+        close(pipe1[0]);
+
+        int status;
+        waitpid(pid, &status, 0);
+
+        sem_post(sem);
+
+        sem_close(sem);
+        sem_unlink(sem_name);
     }
 
     return 0;
 }
 
-void Create_semaphores(sem_t **sem_empty, sem_t **sem_full) {
-    *sem_empty = sem_open(SEM_EMPTY_NAME, O_CREAT | O_EXCL, 0644, 0);
-    if (*sem_empty == SEM_FAILED) {
-        perror("Error creating empty semaphore");
-        exit(EXIT_FAILURE);
-    }
-
-    *sem_full = sem_open(SEM_FULL_NAME, O_CREAT | O_EXCL, 0644, 0);
-    if (*sem_full == SEM_FAILED) {
-        perror("Error creating full semaphore");
+void Create_pipe(int* fd) {
+    if (pipe(fd) == -1) {
+        perror("Error with pipe\n");
         exit(EXIT_FAILURE);
     }
 }
 
-void Create_shared_memory(char **shm_ptr, size_t shm_size) {
-    int shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0644);
-    if (shm_fd == -1) {
-        perror("Error creating shared memory");
-        exit(EXIT_FAILURE);
-    }
-
-    if (ftruncate(shm_fd, shm_size) == -1) {
-        perror("Error setting size of shared memory");
-        exit(EXIT_FAILURE);
-    }
-
-    *shm_ptr = (char *)mmap(nullptr, shm_size, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
-    if (*shm_ptr == MAP_FAILED) {
-        perror("Error mapping shared memory");
-        exit(EXIT_FAILURE);
-    }
-
-    close(shm_fd);
+void handle_error(const char *msg) {
+    perror(msg);
+    exit(EXIT_FAILURE);
 }
