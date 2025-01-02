@@ -7,58 +7,63 @@
 #include <sys/mman.h>
 #include <fcntl.h>
 
+const int SHM_SIZE = 4096;
+const char* SHM_NAME = "/shared_memory";
+const char* DATA_SEM_NAME = "/data_semaphore";
+const char* PROCESSING_SEM_NAME = "/processing_semaphore";
+
 int main() {
-    const char *shm_name = "/shm_example";
-    const char *sem_name = "/sem_example";
-
-    int shm_fd = shm_open(shm_name, O_RDWR, S_IRUSR | S_IWUSR);
-    if (shm_fd == -1) {
-        perror("shm_open");
-        exit(EXIT_FAILURE);
-    }
-
-    char *shm_ptr = (char *)mmap(nullptr, sizeof(char) * 256, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
-    if (shm_ptr == MAP_FAILED) {
-        perror("mmap");
-        exit(EXIT_FAILURE);
-    }
-
-    sem_t *sem = sem_open(sem_name, 0);
-    if (sem == SEM_FAILED) {
-        perror("sem_open");
-        exit(EXIT_FAILURE);
-    }
-
-    char input[256];
+    int shm_fd;
+    char* shm_ptr;
     ssize_t read_bytes;
 
-    while ((read_bytes = read(STDIN_FILENO, input, sizeof(input) - 1)) > 0) {
-        input[read_bytes] = '\0';
+    shm_fd = shm_open(SHM_NAME, O_RDWR, 0666);
+    if (shm_fd == -1) {
+        perror("Problems with shm_open");
+        exit(EXIT_FAILURE);
+    }
 
-        char* line = strtok(input, "\n");
+    shm_ptr = (char*)mmap(NULL, SHM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
+    if (shm_ptr == MAP_FAILED) {
+        perror("Problems with mmap");
+        exit(EXIT_FAILURE);
+    }
+
+    sem_t* data_sem = sem_open(DATA_SEM_NAME, 0);
+    if (data_sem == SEM_FAILED) {
+        perror("Problems with sem_open");
+        exit(EXIT_FAILURE);
+    }
+
+    sem_t* processing_sem = sem_open(PROCESSING_SEM_NAME, 0);
+    if (processing_sem == SEM_FAILED) {
+        perror("Problems with sem_open");
+        exit(EXIT_FAILURE);
+    }
+
+    while (true) {
+        sem_wait(data_sem);
+        if (shm_ptr[0] == '\0') {
+            break;
+        }
+        char* line = strtok(shm_ptr, "\n");
 
         while (line) {
             std::istringstream stream(line);
             float number, sum = 0;
-
             while (stream >> number) {
                 sum += number;
             }
-
             char output[256];
             int output_len = snprintf(output, sizeof(output), "Sum of elements: %.2f\n", sum);
-
-            snprintf(shm_ptr, 256, "%s", output);
-
-            sem_wait(sem);
+            write(STDOUT_FILENO, output, output_len);
 
             line = strtok(nullptr, "\n");
         }
+        sem_post(processing_sem);
     }
-
-    sem_close(sem);
-    munmap(shm_ptr, sizeof(char) * 256);
-    close(shm_fd);
-
+    munmap(shm_ptr, SHM_SIZE);
+    sem_close(data_sem);
+    sem_close(processing_sem);
     return 0;
 }

@@ -1,20 +1,22 @@
 #include <unistd.h>
 #include <fcntl.h>
-#include <sys/mman.h>
 #include <sys/wait.h>
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
 #include <semaphore.h>
-#include <sys/stat.h>
+#include <sys/mman.h>
 
-void Create_pipe(int *fd);
-void handle_error(const char *msg);
+const int SHM_SIZE = 4096;
+const char* SHM_NAME = "/shared_memory";
+const char* DATA_SEM_NAME = "/data_semaphore";
+const char* PROCESSING_SEM_NAME = "/processing_semaphore";
 
 int main() {
     char file[256];
     ssize_t read_bytes;
-    int pipe1[2];
+    int shm_fd;
+    char* shm_ptr;
 
     write(STDOUT_FILENO, "Enter the file name: ", 21);
     read_bytes = read(STDIN_FILENO, file, sizeof(file) - 1);
@@ -25,83 +27,70 @@ int main() {
         perror("Problems with the name of file");
         exit(EXIT_FAILURE);
     }
+    shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
 
-    Create_pipe(pipe1);
+    if (shm_fd == -1) {
+        perror("Problems with shm_open");
+        exit(EXIT_FAILURE);
+    }
+    if (ftruncate(shm_fd, SHM_SIZE) == -1) {
+        perror("Problems with ftruncate");
+        exit(EXIT_FAILURE);
+    }
 
-    const char *shm_name = "/shm_example";
-    const char *sem_name = "/sem_example";
+    shm_ptr = (char*)mmap(NULL, SHM_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
 
-    int shm_fd = shm_open(shm_name, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
-    if (shm_fd == -1) handle_error("shm_open");
+    if (shm_ptr == MAP_FAILED) {
+        perror("Problems with mmap");
+        exit(EXIT_FAILURE);
+    }
 
-    if (ftruncate(shm_fd, sizeof(char) * 256) == -1) handle_error("ftruncate");
+    sem_t* data_sem = sem_open(DATA_SEM_NAME, O_CREAT, 0666, 0);
+    if (data_sem == SEM_FAILED) {
+        perror("Problems with sem_open");
+        exit(EXIT_FAILURE);
+    }
 
-    char *shm_ptr = (char *)mmap(nullptr, sizeof(char) * 256, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
-    if (shm_ptr == MAP_FAILED) handle_error("mmap");
-
-    sem_t *sem = sem_open(sem_name, O_CREAT, S_IRUSR | S_IWUSR, 0);
-    if (sem == SEM_FAILED) handle_error("sem_open");
+    sem_t* processing_sem = sem_open(PROCESSING_SEM_NAME, O_CREAT, 0666, 0);
+    if (processing_sem == SEM_FAILED) {
+        perror("Problems with sem_open");
+        exit(EXIT_FAILURE);
+    }
 
     pid_t pid = fork();
     if (pid == -1) {
         perror("Error with fork\n");
         exit(EXIT_FAILURE);
+
     }
     else if (pid == 0) {
-        close(pipe1[0]);
-
+        execl("./child", "./child", nullptr);
+        perror("Error with execl\n");
+        exit(EXIT_FAILURE);
+    }
+    else {
         int file_fd = open(file, O_RDONLY);
         if (file_fd == -1) {
-            perror("Problems with opening file\n");
+            perror("Problems with opening file");
             exit(EXIT_FAILURE);
         }
 
-        dup2(file_fd, STDIN_FILENO);
-        dup2(pipe1[1], STDOUT_FILENO);
-
-        close(file_fd);
-        close(pipe1[1]);
-
-        sem_wait(sem);
-
-        write(STDOUT_FILENO, shm_ptr, strlen(shm_ptr));
-
-        sem_close(sem);
-        munmap(shm_ptr, sizeof(char) * 256);
-        shm_unlink(shm_name);
-        exit(EXIT_SUCCESS);
-    }
-    else {
-        close(pipe1[1]);
-
-        char buffer[256];
-        while ((read_bytes = read(pipe1[0], buffer, sizeof(buffer) - 1)) > 0) {
-            buffer[read_bytes] = '\0';
-            write(STDOUT_FILENO, buffer, read_bytes);
+        while ((read_bytes = read(file_fd, shm_ptr, SHM_SIZE - 1)) > 0) {
+            shm_ptr[read_bytes] = '\0';
+            sem_post(data_sem);
+            sem_wait(processing_sem);
         }
-
-        close(pipe1[0]);
-
-        int status;
-        waitpid(pid, &status, 0);
-
-        sem_post(sem);
-
-        sem_close(sem);
-        sem_unlink(sem_name);
+        shm_ptr[0] = '\0';
+        sem_post(data_sem);
+        close(file_fd);
+        waitpid(pid, nullptr, 0);
+        munmap(shm_ptr, SHM_SIZE);
+        shm_unlink(SHM_NAME);
+        sem_close(data_sem);
+        sem_unlink(DATA_SEM_NAME);
+        sem_close(processing_sem);
+        sem_unlink(PROCESSING_SEM_NAME);
     }
 
     return 0;
-}
-
-void Create_pipe(int* fd) {
-    if (pipe(fd) == -1) {
-        perror("Error with pipe\n");
-        exit(EXIT_FAILURE);
-    }
-}
-
-void handle_error(const char *msg) {
-    perror(msg);
-    exit(EXIT_FAILURE);
 }
