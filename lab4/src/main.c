@@ -16,15 +16,17 @@ void* default_allocator_create(void* memory, size_t size) {
 }
 
 void default_allocator_destroy(void* allocator) {
-
 }
 
 void* default_allocator_alloc(void* allocator, size_t size) {
-    return mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    if (allocator) {
+        return (void*)((char*)allocator + sizeof(size_t));
+    }
+    return NULL;
 }
 
 void default_allocator_free(void* allocator, void* memory) {
-    munmap(memory, 0);
+
 }
 
 int main(int argc, char** argv) {
@@ -38,7 +40,11 @@ int main(int argc, char** argv) {
             api.allocator_destroy = dlsym(library_handle, "allocator_destroy");
             api.allocator_alloc = dlsym(library_handle, "allocator_alloc");
             api.allocator_free = dlsym(library_handle, "allocator_free");
+        } else {
+            fprintf(stderr, "Failed to load library: %s\n", dlerror());
         }
+    } else {
+        fprintf(stderr, "No library path provided. Using default allocator.\n");
     }
 
     if (!library_handle) {
@@ -48,19 +54,30 @@ int main(int argc, char** argv) {
         api.allocator_free = default_allocator_free;
     }
 
-    void* memory = mmap(NULL, 1024 * 1024, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-    void* allocator = api.allocator_create(memory, 1024 * 1024);
+    size_t pool_size = 1024 * 1024;
+    void* memory = mmap(NULL, pool_size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    if (memory == MAP_FAILED) {
+        perror("mmap failed");
+        return 1;
+    }
 
-    clock_t start = clock();
+    void* allocator = api.allocator_create(memory, pool_size);
+
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
     for (int i = 0; i < 1000; i++) {
         void* ptr = api.allocator_alloc(allocator, 1024);
         api.allocator_free(allocator, ptr);
     }
-    clock_t end = clock();
-    printf("Time taken: %f seconds\n", (double)(end - start) / CLOCKS_PER_SEC);
+
+    clock_gettime(CLOCK_MONOTONIC, &end);
+
+    double time_taken = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+    printf("Time taken: %f seconds\n", time_taken);
 
     api.allocator_destroy(allocator);
-    munmap(memory, 1024 * 1024);
+    munmap(memory, pool_size);
 
     if (library_handle) {
         dlclose(library_handle);

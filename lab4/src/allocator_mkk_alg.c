@@ -15,41 +15,52 @@ typedef struct {
 } Allocator;
 
 Allocator* allocator_create(void* memory, size_t size) {
-    Allocator* allocator = (Allocator*)mmap(NULL, sizeof(Allocator), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-    allocator->memory = memory;
+    Allocator* allocator = (Allocator*)memory;
+    allocator->memory = (char*)memory + sizeof(Allocator);
     allocator->size = size;
-    allocator->free_list = (Block*)memory;
-    allocator->free_list->size = size;
+    allocator->free_list = (Block*)allocator->memory;
+
+    allocator->free_list->size = size - sizeof(Allocator);
     allocator->free_list->next = NULL;
+
     return allocator;
 }
 
 void allocator_destroy(Allocator* allocator) {
-    munmap(allocator, sizeof(Allocator));
+    munmap(allocator, allocator->size);
 }
 
 void* allocator_alloc(Allocator* allocator, size_t size) {
+    Block* best_fit = NULL;
     Block* prev = NULL;
     Block* curr = allocator->free_list;
 
     while (curr != NULL) {
         if (curr->size >= size) {
-            if (curr->size > size + sizeof(Block)) {
-                Block* new_block = (Block*)((char*)curr + sizeof(Block) + size);
-                new_block->size = curr->size - size - sizeof(Block);
-                new_block->next = curr->next;
-                curr->size = size;
-                curr->next = new_block;
+            if (best_fit == NULL || curr->size < best_fit->size) {
+                best_fit = curr;
+                prev = curr;
             }
-            if (prev == NULL) {
-                allocator->free_list = curr->next;
-            } else {
-                prev->next = curr->next;
-            }
-            return (void*)((char*)curr + sizeof(Block));
         }
-        prev = curr;
         curr = curr->next;
+    }
+
+    if (best_fit != NULL) {
+        if (best_fit->size > size + sizeof(Block)) {
+            Block* new_block = (Block*)((char*)best_fit + sizeof(Block) + size);
+            new_block->size = best_fit->size - size - sizeof(Block);
+            new_block->next = best_fit->next;
+            best_fit->size = size;
+            best_fit->next = new_block;
+        }
+
+        if (prev == NULL) {
+            allocator->free_list = best_fit->next;
+        } else {
+            prev->next = best_fit->next;
+        }
+
+        return (void*)((char*)best_fit + sizeof(Block));
     }
     return NULL;
 }
