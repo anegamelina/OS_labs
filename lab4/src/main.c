@@ -4,7 +4,7 @@
 #include <sys/mman.h>
 #include <time.h>
 
-typedef struct {
+typedef struct AllocatorAPI{
     void* (*allocator_create)(void*, size_t);
     void (*allocator_destroy)(void*);
     void* (*allocator_alloc)(void*, size_t);

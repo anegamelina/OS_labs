@@ -8,7 +8,7 @@ typedef struct Block {
     struct Block* next;
 } Block;
 
-typedef struct {
+typedef struct Allocator{
     void* memory;
     size_t size;
     Block* free_list;
