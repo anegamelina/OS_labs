@@ -4,7 +4,7 @@
 #include <sys/mman.h>
 #include <time.h>
 
-typedef struct AllocatorAPI{
+typedef struct AllocatorAPI {
     void* (*allocator_create)(void*, size_t);
     void (*allocator_destroy)(void*);
     void* (*allocator_alloc)(void*, size_t);
@@ -26,7 +26,6 @@ void* default_allocator_alloc(void* allocator, size_t size) {
 }
 
 void default_allocator_free(void* allocator, void* memory) {
-
 }
 
 int main(int argc, char** argv) {
@@ -64,17 +63,27 @@ int main(int argc, char** argv) {
     void* allocator = api.allocator_create(memory, pool_size);
 
     struct timespec start, end;
-    clock_gettime(CLOCK_MONOTONIC, &start);
+    double time_taken;
 
-    for (int i = 0; i < 1000; i++) {
-        void* ptr = api.allocator_alloc(allocator, 1024);
+    // тестирование выделения памяти
+    for (int i = 0; i < 3; i++) {
+        size_t block_size = 1024 * (i + 1);  // Размер блока увеличивается с каждой итерацией
+
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        void* ptr = api.allocator_alloc(allocator, block_size);
+        clock_gettime(CLOCK_MONOTONIC, &end);
+
+        time_taken = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+        printf("Allocated block: %p, size: %zu bytes, time: %.9f seconds\n", ptr, block_size, time_taken);
+
+        clock_gettime(CLOCK_MONOTONIC, &start);
         api.allocator_free(allocator, ptr);
+        clock_gettime(CLOCK_MONOTONIC, &end);
+
+        time_taken = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+        printf("Freed block: %p (id=%d, name=Object %d, value=%.2f), time: %.9f seconds\n",
+               ptr, i + 1, i + 1, (double)(i + 1) * 123.45, time_taken);
     }
-
-    clock_gettime(CLOCK_MONOTONIC, &end);
-
-    double time_taken = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
-    printf("Time taken: %f seconds\n", time_taken);
 
     api.allocator_destroy(allocator);
     munmap(memory, pool_size);
