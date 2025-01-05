@@ -3,69 +3,79 @@
 #include <string.h>
 #include <sys/mman.h>
 
+#define ALIGN_SIZE(size, alignment) (((size) + (alignment - 1)) & ~(alignment - 1))
+#define FREE_LIST_ALIGNMENT 8
+
 typedef struct Block {
     size_t size;
     struct Block* next;
 } Block;
 
-typedef struct {
+typedef struct Allocator{
     void* memory;
     size_t size;
     Block* free_list;
 } Allocator;
 
 Allocator* allocator_create(void* memory, size_t size) {
+    if (memory == NULL || size < sizeof(Allocator)) {
+        return NULL;
+    }
+
     Allocator* allocator = (Allocator*)memory;
     allocator->memory = (char*)memory + sizeof(Allocator);
-    allocator->size = size;
+    allocator->size = size - sizeof(Allocator);
     allocator->free_list = (Block*)allocator->memory;
 
-    allocator->free_list->size = size - sizeof(Allocator);
-    allocator->free_list->next = NULL;
+    if (allocator->free_list != NULL) {
+        allocator->free_list->size = allocator->size;
+        allocator->free_list->next = NULL;
+    }
 
     return allocator;
 }
 
 void allocator_destroy(Allocator* allocator) {
-    munmap(allocator, allocator->size);
+    if (allocator == NULL) {
+        return;
+    }
+
+    allocator->memory = NULL;
+    allocator->size = 0;
+    allocator->free_list = NULL;
 }
 
 void* allocator_alloc(Allocator* allocator, size_t size) {
-    Block* best_fit = NULL;
+    if (allocator == NULL || size == 0) {
+        return NULL;
+    }
+
+    size_t aligned_size = ALIGN_SIZE(size, FREE_LIST_ALIGNMENT);
     Block* prev = NULL;
     Block* curr = allocator->free_list;
 
     while (curr != NULL) {
-        if (curr->size >= size) {
-            if (best_fit == NULL || curr->size < best_fit->size) {
-                best_fit = curr;
-                prev = curr;
+        if (curr->size >= aligned_size) {
+            if (prev != NULL) {
+                prev->next = curr->next;
+            } else {
+                allocator->free_list = curr->next;
             }
+            return (void*)((char*)curr + sizeof(Block));
         }
+
+        prev = curr;
         curr = curr->next;
     }
 
-    if (best_fit != NULL) {
-        if (best_fit->size > size + sizeof(Block)) {
-            Block* new_block = (Block*)((char*)best_fit + sizeof(Block) + size);
-            new_block->size = best_fit->size - size - sizeof(Block);
-            new_block->next = best_fit->next;
-            best_fit->size = size;
-            best_fit->next = new_block;
-        }
-
-        if (prev == NULL) {
-            allocator->free_list = best_fit->next;
-        } else {
-            prev->next = best_fit->next;
-        }
-
-        return (void*)((char*)best_fit + sizeof(Block));
-    }
     return NULL;
 }
 
 void allocator_free(Allocator* allocator, void* memory) {
+    if (allocator == NULL || memory == NULL) {
+        return;
+    }
+
     Block* block = (Block*)((char*)memory - sizeof(Block));
     block->next = allocator->free_list;
     allocator->free_list = block;
