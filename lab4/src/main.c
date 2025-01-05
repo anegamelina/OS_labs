@@ -67,7 +67,7 @@ int main(int argc, char** argv) {
 
     // тестирование выделения памяти
     for (int i = 0; i < 3; i++) {
-        size_t block_size = 1024 * (i + 1);  // Размер блока увеличивается с каждой итерацией
+        size_t block_size = 1024 * (i + 1);  // размер блока увеличивается с каждой итерацией
 
         clock_gettime(CLOCK_MONOTONIC, &start);
         void* ptr = api.allocator_alloc(allocator, block_size);
